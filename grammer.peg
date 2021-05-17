@@ -1,0 +1,137 @@
+program <- toplevel_piece *
+toplevel_piece <- indent (
+  function_declaration
+  / function_call
+  / require_statement
+  / empty_statement
+  / single_line_comment
+  / multiple_line_comment
+  / newline
+)
+
+indent <- (" " / "\t") *
+attribute <- indent "#[" (function_call / function_identifier) "]"
+function_declaration <- (attribute "\n" ?)* indent "fn" sym_sp_1 function_identifier sym_lpar argument_declaration_opt sym_rpar sym_col sym_sp_0 type sym_sp_0 sym_lbrace program_in_function sym_rbrace
+program_in_function <- indent function_piece *
+function_piece <- indent (
+  variable_declation
+  / function_call
+  / variable_assign
+  / return_with_value
+  / return_without_value
+  / empty_statement
+  / single_line_comment
+  / multiple_line_comment
+  / newline
+  / if_expr
+  / when_expr
+  / while_statement
+  / loop_statement
+  / break_statement
+  / continue_statement
+)
+require_statement <- "require" sym_sp_1 string_literal
+while_statement <- "while" sym_sp_1 "(" expression ")" sym_sp_0 "{" program_in_function "}"
+loop_statement <- "loop" sym_sp_0 "{" program_in_function "}"
+break_statement <- "break"
+continue_statement <- "continue"
+variable_declation <- (indent attribute "\n" ? ) * indent (variable_declation_var / variable_declation_val)
+variable_declation_var <- "var" sym_sp_1 variable_identifier ((sym_col sym_sp_0 type) / (sym_eq expression) / (sym_col sym_sp_0 type sym_sp_0 sym_eq expression))
+variable_declation_val <- "val" sym_sp_1 variable_identifier (sym_col sym_sp_0 type) ? sym_sp_0 sym_eq sym_sp_0 expression
+function_call <- function_identifier sym_lpar function_arguments_opt sym_rpar
+function_arguments_opt <- function_arguments ?
+function_arguments <- expression (sym_comma function_arguments) *
+variable_assign <- variable_identifier sym_eq expression
+return_with_value <- "return" sym_sp_1 expression
+return_without_value <- "return"
+empty_statement <- ";"
+newline <- "\n"
+single_line_comment <- "//" (!"\n" .)* "\n"
+multiple_line_comment <- "/*" (!"*/" .)+ "*/"
+type <- type_generic / type_non_generic / type_function / "(" type ")"
+type_generic <- type_identifier "!" "<" sym_sp_0 type_arguments sym_sp_0 ">"
+type_non_generic <- type_identifier
+type_function <- "(" type_arguments ")" sym_sp_0 "=>" sym_sp_0 type
+type_identifier <- (& (alpha_upper / alpha_lower / sym_lodash) .) (& (alpha_upper / alpha_lower / digit / sym_lodash) .) *
+type_arguments <- type ("," sym_sp_0 type) *
+sym_sp_0 <- (" " / "\n" / "\t") *
+sym_sp_1 <- (" " / "\n" / "\t") +
+sym_eq <- "="
+sym_col <- ":"
+sym_comma <- ","
+sym_rpar <- ")"
+sym_lpar <- "("
+sym_lbrace <- "{"
+sym_rbrace <- "}"
+sym_lodash <- "_"
+alpha_upper <- [A-Z]
+alpha_lower <- [a-z]
+digit <- [0-9]
+
+# all expression
+# * string_literal must have higher precedence than variable_identifier
+#   because string_literal may have string_literal_prefix and it may conflict with variable_identifier
+
+expression <- if_expr / when_expr / string_literal / boolean_literal / integral_literal / variable_identifier / boolean_op / comparing_op / additive / pow_op
+
+may_wrapped_in_block <- 
+  ("{" sym_sp_0 (expression / program_in_function) sym_sp_0 "}")
+  / (expression / program_in_function)
+if_expr <- "if" sym_sp_0 "(" expression ")" sym_sp_0 may_wrapped_in_block sym_sp_0 ("elseif" sym_sp_0 "(" expression ")" sym_sp_0 may_wrapped_in_block)* ("else" sym_sp_0 may_wrapped_in_block)
+when_expr <- "when" sym_sp_0 "(" expression ")" sym_sp_0 "{" sym_sp_0 when_arms sym_sp_0 "}"
+when_arms <- when_arm+ default_arm?
+when_arm <- "case" sym_sp_1 (integral_literal / string_literal / variable_identifier) sym_sp_1 "=>" sym_sp_0 may_wrapped_in_block sym_sp_0
+default_arm <- "case" sym_sp_1 "_" sym_sp_1 "=>" sym_sp_0 may_wrapped_in_block
+# boolean operators have the lowest precedence
+boolean_ops <- "&&" / "||" / "|" / "&"
+boolean_op_operand <- variable_identifier / comparing_op / additive / boolean_literal
+boolean_op <- boolean_op_operand sym_sp_0 boolean_ops sym_sp_0 boolean_op_operand
+
+# comparing operators have higher precedence than boolean operators
+comparing_ops <- "<=>" / "<=" / "<" / "==" / ">=" / ">" / "!="
+comparing_op_operand <- additive / string_literal
+comparing_op <- comparing_op_operand (sym_sp_0 comparing_ops sym_sp_0 comparing_op_operand) +
+
+# additive operators have higher precedence than comparing operators
+additive_ops <- "+" / "-"
+additive <- multitive (additive_ops multitive) *
+
+# multitive operators have higher precedence than additive operators
+multitive_ops <- "*" / "/"
+multitive_op_operand <- pow_op / unary_op / primary
+multitive <- multitive_op_operand (multitive_ops multitive_op_operand) *
+
+# power operator has higher precedence than multitive operators
+pow_ops <- "**"
+pow_op_operand <- unary_op / primary
+# right assoc
+pow_op <- pow_op_operand pow_ops (pow_op / pow_op_operand)
+
+# unary operators have higher precedence than power operator
+unary_ops <- "-" / "~" / "!"
+unary_op <- unary_ops primary
+
+# primary group has the highest precedence
+primary <- anonymous_function / "(" expression ")" / integral_literal / string_literal / function_call
+anonymous_function <- "(" sym_sp_0 anonymous_function_arguments_opt sym_sp_0  ")" sym_sp_0 "=>" sym_sp_0 (expression / sym_lbrace program_in_function sym_rbrace)
+anonymous_function_arguments_opt <- anonymous_function_arguments ?
+anonymous_function_arguments <- variable_identifier (sym_sp_0 ":" sym_sp_0 type) ? (sym_sp_0 "," sym_sp_0 variable_identifier (sym_sp_0 ":" sym_sp_0 type) ?) *
+
+# To parse integral literal correctly, decimal literal must have the lowest precedence 
+# because all other integral literal has prefix before their digits.
+integral_literal <- bin_literal / oct_literal / hex_literal / dec_literal
+dec_literal <- (digit) +
+hex_literal <- "0" ("x" / "X") (hex_digit) +
+hex_digit <- [0-9a-fA-F]
+oct_literal <- "0" ("o" / "O") (oct_digit) +
+oct_digit <- [0-7]
+bin_literal <- "0" ("b" / "B") (bin_digit) +
+bin_digit <- [01]
+boolean_literal <- "true" / "false"
+string_literal <- string_prefix "\"" string_literal_chars "\""
+string_literal_chars <- (!"\"" .) *
+string_prefix <- ((& alpha_lower) . ((& (alpha_lower / digit)) .)* )?
+variable_identifier <- (alpha_upper / alpha_lower / sym_lodash) (alpha_upper / alpha_lower / digit / sym_lodash) *
+function_identifier <- (alpha_upper / alpha_lower / sym_lodash) (alpha_upper / alpha_lower / digit / sym_lodash) *
+argument_declaration_opt <- argument_declaration ?
+argument_declaration <- variable_identifier sym_col sym_sp_0 type (sym_sp_0 sym_comma sym_sp_0 argument_declaration) *
